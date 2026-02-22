@@ -1,3 +1,23 @@
+-- ============================================================================
+--                              SNAKE - PAXOPHONE
+-- ============================================================================
+-- Jeu du Snake adapté pour le Paxophone
+--
+-- Commandes tactiles : Toucher l'écran par rapport au centre pour choisir
+-- la direction (haut/bas/gauche/droite)
+--
+-- Score :
+--   - -1 point par mouvement
+--   - +35 points de base par nourriture mangée
+--   - Bonus de +5 points par segment supplémentaire du serpent
+--   - Le score ne peut pas être négatif
+--
+-- Vitesse :
+--   - Commence à 400ms, diminue de 10ms par segment
+--   - Plafond à 100ms
+--   - Affichée via des chevrons (1 à 5)
+-- ============================================================================
+
 local direction = "down"
 local oldWin
 local rythme
@@ -8,43 +28,66 @@ function int(x)
     return math.floor(x)
 end
 
-local CELL_SIZE = 20
-local GAP = 2
-local CASE_SIZE = CELL_SIZE - GAP
+-- ============================================================================
+-- CONFIGURATION DE L'ÉCRAN
+-- ============================================================================
+-- Dimensions des cases de la grille
+local CELL_SIZE = 20        -- Taille totale d'une case (case + espacement)
+local GAP = 2                -- Espace entre deux cases
+local CASE_SIZE = CELL_SIZE - GAP  -- Taille visuelle de la case
 
+-- Dimensions de la barre de statut (en pixels)
 local STATUS_BAR_HEIGHT = 40
 local SCREEN_WIDTH = 320
 local SCREEN_HEIGHT = 480
 
--- Couleurs du jeu
-local COLOR_BORDER = COLOR_YELLOW
-local COLOR_BACKGROUND = COLOR_DARK
-local COLOR_SNAKE = COLOR_GREEN
-local COLOR_FOOD = COLOR_RED
-local COLOR_INGAME_SCORE = COLOR_GREEN
-local COLOR_FINAL_SCORE = COLOR_GREEN
-local COLOR_FINAL_MAX = COLOR_YELLOW
-local COLOR_BUTTON = COLOR_LIGHT_GREY
+-- ============================================================================
+-- COULEURS DU JEU
+-- ============================================================================
+-- Toutes les couleurs utilisées dans le jeu pour une modification centralisée
+local COLOR_BORDER = COLOR_YELLOW     -- Bordures (zone de jeu + barre de statut)
+local COLOR_BACKGROUND = COLOR_DARK    -- Fond de la zone de jeu
+local COLOR_SNAKE = COLOR_GREEN       -- Corps du serpent
+local COLOR_FOOD = COLOR_RED           -- Nourriture
+local COLOR_INGAME_SCORE = COLOR_GREEN -- Texte du score en jeu
+local COLOR_FINAL_SCORE = COLOR_GREEN  -- Texte du score en écran game over
+local COLOR_FINAL_MAX = COLOR_YELLOW   -- Texte du meilleur score
+local COLOR_BUTTON = COLOR_LIGHT_GREY  -- Boutons
+
+-- ============================================================================
+-- CALCUL DE LA GRILLE
+-- ============================================================================
+-- La grille est calculée automatiquement pour remplir la zone de jeu
+-- en fonction de la taille des cases
 
 local GAME_W = SCREEN_WIDTH
 local GAME_H = SCREEN_HEIGHT - STATUS_BAR_HEIGHT
 
-local cols = math.floor(GAME_W / CELL_SIZE)
-local rows = math.floor(GAME_H / CELL_SIZE)
-local paddingX = math.floor((GAME_W - cols * CELL_SIZE) / 2)
-local paddingY = math.floor((GAME_H - rows * CELL_SIZE) / 2)
+local cols = math.floor(GAME_W / CELL_SIZE)    -- Nombre de colonnes (16)
+local rows = math.floor(GAME_H / CELL_SIZE)   -- Nombre de lignes (22)
+local paddingX = math.floor((GAME_W - cols * CELL_SIZE) / 2)  -- Marge X (0)
+local paddingY = math.floor((GAME_H - rows * CELL_SIZE) / 2)  -- Marge Y (0)
 
-local gridSize = {w = cols, h = rows}
+local gridSize = {w = cols, h = rows}  -- Dimensions de la grille de jeu
 
-local score = 0
-local maxScore = 0
+-- ============================================================================
+-- SYSTÈME DE SCORE
+-- ============================================================================
+local score = 0          -- Score actuel de la partie en cours
+local maxScore = 0       -- Meilleur score atteint depuis l'installation
+-- Points gagnés par nourriture : (nb cases écran) / 10 = 35 points
 local FOOD_POINTS = math.floor(cols * rows / 10)
 
--- Vitesse du jeu
-local GAME_SPEED = 400
-local SPEED_DECREASE = 10
-local MIN_SPEED = 100
+-- ============================================================================
+-- SYSTÈME DE VITESSE
+-- ============================================================================
+-- Le serpent accélère à mesure qu'il grandit
+-- Formule : vitesse = GAME_SPEED - (longueur_serpent * SPEED_DECREASE)
+local GAME_SPEED = 400     -- Vitesse initiale en ms (lent)
+local SPEED_DECREASE = 10 -- Millisecondes retirées par segment
+local MIN_SPEED = 100     -- Vitesse minimum absolue (très rapide)
 
+-- Retourne la vitesse actuelle en millisecondes
 local function getSpeed()
     if not snake or #snake == 0 then
         return GAME_SPEED
@@ -53,6 +96,8 @@ local function getSpeed()
     return math.max(speed, MIN_SPEED)
 end
 
+-- Retourne le nombre de chevrons (1-5) selon la vitesse
+-- Échelle : 400ms = 1 chevron, 340ms = 2, 280ms = 3, 220ms = 4, 160ms = 5
 local function getSpeedChevrons()
     local speed = getSpeed()
     local diff = GAME_SPEED - speed
@@ -60,6 +105,7 @@ local function getSpeedChevrons()
     return math.min(chevrons, 5)
 end
 
+-- Retourne la chaîne de chevrons pour l'affichage (ex: ">>>")
 local function getSpeedString()
     local count = getSpeedChevrons()
     return string.rep(">", count)
@@ -222,6 +268,7 @@ function afficheEcranJeu()
     statusBar:setBorderColor(COLOR_BORDER)
     statusBar:setBorderSize(1)
 
+    -- Initialisation du serpent : position de départ (x=3, y=2), direction vers le bas, score à 0
     snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
     food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
     direction = "down"
@@ -233,6 +280,14 @@ function afficheEcranJeu()
     local canvasH = rows * CELL_SIZE
     drawRect_canvas = gui:canvas(winEcranJeu, paddingX, STATUS_BAR_HEIGHT + paddingY, canvasW, canvasH)
 
+    -- ============================================================================
+    -- CONTRÔLES TACTILES
+    -- ============================================================================
+    -- La direction est choisie selon la position du touch par rapport au centre
+    -- Si touch à droite du centre → aller à droite
+    -- Si touch à gauche du centre → aller à gauche
+    -- Si touch en haut du centre → aller en haut
+    -- Si touch en bas du centre → aller en bas
     drawRect_canvas:onTouch(function(a)
         local touchX = a[1]
         local touchY = a[2]
@@ -258,8 +313,10 @@ function afficheEcranJeu()
         end
     end)
 
+    -- Dessin du fond de la zone de jeu
     drawRect_canvas:fillRect(0, 0, canvasW, canvasH, COLOR_BACKGROUND)
 
+    -- Dessin des bordures autour de la zone de jeu (haut, bas, gauche, droite)
     drawRect_canvas:fillRect(0, 0, canvasW, 1, COLOR_BORDER)
     drawRect_canvas:fillRect(0, canvasH - 1, canvasW, 1, COLOR_BORDER)
     drawRect_canvas:fillRect(0, 0, 1, canvasH, COLOR_BORDER)
@@ -272,6 +329,7 @@ function afficheEcranJeu()
 
 end
 
+-- Dessin du serpent : +1 pixel pour décaler les cases et éviter de recouvrir les bordures
 function drawSnake()
     for i, part in ipairs(snake) do
         local px = (part.x - 1) * CELL_SIZE + 1
@@ -280,6 +338,7 @@ function drawSnake()
     end
 end
 
+-- Dessin de la nourriture : même décalage de +1 pixel
 function drawFood()
     local px = (food.x - 1) * CELL_SIZE + 1
     local py = (food.y - 1) * CELL_SIZE + 1
@@ -287,6 +346,7 @@ function drawFood()
 end
 
 function updateSnake()
+    -- Pénalité : -1 point par mouvement (incite à être efficace)
     score = math.max(0, score - 1)
     statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. getSpeedString())
     local head = {x=snake[1].x, y=snake[1].y}
@@ -319,9 +379,11 @@ function updateSnake()
     table.insert(snake, 1, head)
 
     if snake[1].x == food.x and snake[1].y == food.y then
+        -- Bonus progressif : +5 points par segment au-delà des 3 premiers
         score = score + FOOD_POINTS + (#snake - 3) * 5
         if score > maxScore then maxScore = score end
         statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. getSpeedString())
+        -- Mise à jour de la vitesse quand le serpent mange
         time:removeInterval(rythme)
         rythme = time:setInterval(update, getSpeed())
         -- Générer une nouvelle position pour la nourriture
