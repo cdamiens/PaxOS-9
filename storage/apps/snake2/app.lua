@@ -40,7 +40,31 @@ local score = 0
 local maxScore = 0
 local FOOD_POINTS = math.floor(cols * rows / 10)
 
-local snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
+-- Vitesse du jeu
+local GAME_SPEED = 400
+local SPEED_DECREASE = 10
+local MIN_SPEED = 100
+
+local function getSpeed()
+    if not snake or #snake == 0 then
+        return GAME_SPEED
+    end
+    local speed = GAME_SPEED - (#snake * SPEED_DECREASE)
+    return math.max(speed, MIN_SPEED)
+end
+
+local function getSpeedChevrons()
+    local speed = getSpeed()
+    local diff = GAME_SPEED - speed
+    local chevrons = math.floor(diff / 60) + 1
+    return math.min(chevrons, 5)
+end
+
+local function getSpeedString()
+    local count = getSpeedChevrons()
+    return string.rep(">", count)
+end
+
 local food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
 
 -- Fonction de création d'une fenetre
@@ -191,7 +215,6 @@ function afficheEcranJeu()
 
     statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
     statusBar:setBackgroundColor(COLOR_BACKGROUND)
-    statusBar:setText("Score: " .. score .. " | Max: " .. maxScore)
     statusBar:setFontSize(20)
     statusBar:setTextColor(COLOR_INGAME_SCORE)
     statusBar:setHorizontalAlignment(CENTER_ALIGNMENT)
@@ -203,7 +226,7 @@ function afficheEcranJeu()
     food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
     direction = "down"
     score = 0
-    statusBar:setText("Score: 0")
+    statusBar:setText("Score: 0 | Max: 0 | " .. getSpeedString())
     gameRunning = true
 
     local canvasW = cols * CELL_SIZE
@@ -245,7 +268,7 @@ function afficheEcranJeu()
     drawSnake()
     drawFood()
 
-    rythme = time:setInterval(update, 300)
+    rythme = time:setInterval(update, getSpeed())
 
 end
 
@@ -265,7 +288,7 @@ end
 
 function updateSnake()
     score = math.max(0, score - 1)
-    statusBar:setText("Score: " .. score .. " | Max: " .. maxScore)
+    statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. getSpeedString())
     local head = {x=snake[1].x, y=snake[1].y}
 
     if direction == "right" then
@@ -298,7 +321,9 @@ function updateSnake()
     if snake[1].x == food.x and snake[1].y == food.y then
         score = score + FOOD_POINTS + (#snake - 3) * 5
         if score > maxScore then maxScore = score end
-        statusBar:setText("Score: " .. score .. " | Max: " .. maxScore)
+        statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. getSpeedString())
+        time:removeInterval(rythme)
+        rythme = time:setInterval(update, getSpeed())
         -- Générer une nouvelle position pour la nourriture
         -- qui n'est pas sur le serpent
         repeat
