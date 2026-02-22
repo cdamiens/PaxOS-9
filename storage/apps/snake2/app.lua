@@ -15,6 +15,7 @@ local CASE_SIZE = CELL_SIZE - GAP
 local STATUS_BAR_HEIGHT = 40
 local SCREEN_WIDTH = 320
 local SCREEN_HEIGHT = 480
+local BORDER_COLOR = COLOR_YELLOW
 
 local GAME_W = SCREEN_WIDTH
 local GAME_H = SCREEN_HEIGHT - STATUS_BAR_HEIGHT
@@ -167,6 +168,15 @@ function afficheEcranJeu()
     statusBar:setHorizontalAlignment(CENTER_ALIGNMENT)
     statusBar:setVerticalAlignment(CENTER_ALIGNMENT)
 
+    local statusBorderTop = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, 1)
+    statusBorderTop:setBackgroundColor(BORDER_COLOR)
+
+    local statusBorderLeft = gui:label(winEcranJeu, 0, 0, 1, STATUS_BAR_HEIGHT)
+    statusBorderLeft:setBackgroundColor(BORDER_COLOR)
+
+    local statusBorderRight = gui:label(winEcranJeu, SCREEN_WIDTH - 1, 0, 1, STATUS_BAR_HEIGHT)
+    statusBorderRight:setBackgroundColor(BORDER_COLOR)
+
     snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
     food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
     direction = "down"
@@ -203,6 +213,12 @@ function afficheEcranJeu()
     end)
 
     drawRect_canvas:fillRect(0, 0, canvasW, canvasH, COLOR_DARK)
+
+    drawRect_canvas:fillRect(0, 0, canvasW, 1, BORDER_COLOR)
+    drawRect_canvas:fillRect(0, canvasH - 1, canvasW, 1, BORDER_COLOR)
+    drawRect_canvas:fillRect(0, 0, 1, canvasH, BORDER_COLOR)
+    drawRect_canvas:fillRect(canvasW - 1, 0, 1, canvasH, BORDER_COLOR)
+
     drawSnake()
     drawFood()
 
@@ -212,15 +228,15 @@ end
 
 function drawSnake()
     for i, part in ipairs(snake) do
-        local px = (part.x - 1) * CELL_SIZE
-        local py = (part.y - 1) * CELL_SIZE
+        local px = (part.x - 1) * CELL_SIZE + 1
+        local py = (part.y - 1) * CELL_SIZE + 1
         drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_GREEN)
     end
 end
 
 function drawFood()
-    local px = (food.x - 1) * CELL_SIZE
-    local py = (food.y - 1) * CELL_SIZE
+    local px = (food.x - 1) * CELL_SIZE + 1
+    local py = (food.y - 1) * CELL_SIZE + 1
     drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_RED)
 end
 
@@ -262,14 +278,14 @@ function updateSnake()
         until not isFoodOnSnake(food)
     else
         local tail = table.remove(snake)
-        local px = (tail.x - 1) * CELL_SIZE
-        local py = (tail.y - 1) * CELL_SIZE
+        local px = (tail.x - 1) * CELL_SIZE + 1
+        local py = (tail.y - 1) * CELL_SIZE + 1
         drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_DARK)
     end
 
     -- Afficher que la tête
-    local px = (head.x - 1) * CELL_SIZE
-    local py = (head.y - 1) * CELL_SIZE
+    local px = (head.x - 1) * CELL_SIZE + 1
+    local py = (head.y - 1) * CELL_SIZE + 1
     drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_GREEN)
 end
 
