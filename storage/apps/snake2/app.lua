@@ -8,9 +8,23 @@ function int(x)
     return math.floor(x)
 end
 
-local canvaSize = {w = 310, h = 470}
-local gridSize = {w = int(canvaSize.w/20), h = int(canvaSize.h/20)}
-local factor = canvaSize.w / gridSize.w
+local CELL_SIZE = 20
+local GAP = 2
+local CASE_SIZE = CELL_SIZE - GAP
+
+local STATUS_BAR_HEIGHT = 40
+local SCREEN_WIDTH = 320
+local SCREEN_HEIGHT = 480
+
+local GAME_W = SCREEN_WIDTH
+local GAME_H = SCREEN_HEIGHT - STATUS_BAR_HEIGHT
+
+local cols = math.floor(GAME_W / CELL_SIZE)
+local rows = math.floor(GAME_H / CELL_SIZE)
+local paddingX = math.floor((GAME_W - cols * CELL_SIZE) / 2)
+local paddingY = math.floor((GAME_H - rows * CELL_SIZE) / 2)
+
+local gridSize = {w = cols, h = rows}
 
 local snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
 local food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
@@ -145,15 +159,27 @@ function afficheEcranJeu()
     
     local winEcranJeu = manageWindow()
 
+    local statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
+    statusBar:setBackgroundColor(COLOR_DARK)
+    statusBar:setText("Score: 0")
+    statusBar:setFontSize(20)
+    statusBar:setTextColor(COLOR_GREEN)
+    statusBar:setHorizontalAlignment(CENTER_ALIGNMENT)
+    statusBar:setVerticalAlignment(CENTER_ALIGNMENT)
+
     snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
     food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
     direction = "down"
     gameRunning = true
 
-    drawRect_canvas = gui:canvas(winEcranJeu, 5, 5, 310, 470)
+    local canvasW = cols * CELL_SIZE
+    local canvasH = rows * CELL_SIZE
+    drawRect_canvas = gui:canvas(winEcranJeu, paddingX, STATUS_BAR_HEIGHT + paddingY, canvasW, canvasH)
 
     drawRect_canvas:onTouch(function(a)
-        local diff = {x=snake[1].x*factor-a[1], y=snake[1].y*factor-a[2]}
+        local px = (snake[1].x - 1) * CELL_SIZE
+        local py = (snake[1].y - 1) * CELL_SIZE
+        local diff = {x=px - a[1], y=py - a[2]}
         print(diff.x)
         print(diff.y)
         if (math.abs(diff.x) > math.abs(diff.y)) then
@@ -176,7 +202,7 @@ function afficheEcranJeu()
         print(direction)
     end)
 
-    drawRect_canvas:fillRect(0, 0, 310, 470, COLOR_DARK)
+    drawRect_canvas:fillRect(0, 0, canvasW, canvasH, COLOR_DARK)
     drawSnake()
     drawFood()
 
@@ -186,12 +212,16 @@ end
 
 function drawSnake()
     for i, part in ipairs(snake) do
-        drawRect_canvas:fillRect(int((part.x-1)*factor), int((part.y-1)*factor), 15, 15, COLOR_GREEN)
+        local px = (part.x - 1) * CELL_SIZE
+        local py = (part.y - 1) * CELL_SIZE
+        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_GREEN)
     end
 end
 
 function drawFood()
-    drawRect_canvas:fillRect(int((food.x-1)*factor), int((food.y-1)*factor), 15, 15, COLOR_RED)
+    local px = (food.x - 1) * CELL_SIZE
+    local py = (food.y - 1) * CELL_SIZE
+    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_RED)
 end
 
 function updateSnake()
@@ -232,12 +262,15 @@ function updateSnake()
         until not isFoodOnSnake(food)
     else
         local tail = table.remove(snake)
-        -- Effacer le dernier point de la queue
-        drawRect_canvas:fillRect(int((tail.x-1)*factor), int((tail.y-1)*factor), 15, 15, COLOR_DARK)
+        local px = (tail.x - 1) * CELL_SIZE
+        local py = (tail.y - 1) * CELL_SIZE
+        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_DARK)
     end
 
     -- Afficher que la tête
-    drawRect_canvas:fillRect(int((head.x-1)*factor), int((head.y-1)*factor), 15, 15, COLOR_GREEN)
+    local px = (head.x - 1) * CELL_SIZE
+    local py = (head.y - 1) * CELL_SIZE
+    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_GREEN)
 end
 
 function isFoodOnSnake(food)
