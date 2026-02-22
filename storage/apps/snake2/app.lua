@@ -15,7 +15,16 @@ local CASE_SIZE = CELL_SIZE - GAP
 local STATUS_BAR_HEIGHT = 40
 local SCREEN_WIDTH = 320
 local SCREEN_HEIGHT = 480
-local BORDER_COLOR = COLOR_YELLOW
+
+-- Couleurs du jeu
+local COLOR_BORDER = COLOR_YELLOW
+local COLOR_BACKGROUND = COLOR_DARK
+local COLOR_SNAKE = COLOR_GREEN
+local COLOR_FOOD = COLOR_RED
+local COLOR_INGAME_SCORE = COLOR_GREEN
+local COLOR_FINAL_SCORE = COLOR_GREEN
+local COLOR_FINAL_MAX = COLOR_YELLOW
+local COLOR_BUTTON = COLOR_LIGHT_GREY
 
 local GAME_W = SCREEN_WIDTH
 local GAME_H = SCREEN_HEIGHT - STATUS_BAR_HEIGHT
@@ -26,6 +35,10 @@ local paddingX = math.floor((GAME_W - cols * CELL_SIZE) / 2)
 local paddingY = math.floor((GAME_H - rows * CELL_SIZE) / 2)
 
 local gridSize = {w = cols, h = rows}
+
+local score = 0
+local maxScore = 0
+local FOOD_POINTS = math.floor(cols * rows / 10)
 
 local snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
 local food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
@@ -68,7 +81,7 @@ function afficheEcranAccueil()
     local winEcranAccueil = manageWindow()
 
     local accueilCanvas = gui:canvas(winEcranAccueil, 0, 0, 320, 480)
-    local imageAccueil = gui:image(accueilCanvas, "PaxoSnake.png", 0, 0, 320, 480, COLOR_DARK)
+    local imageAccueil = gui:image(accueilCanvas, "PaxoSnake.png", 0, 0, 320, 480, COLOR_BACKGROUND)
 
     -- local lblTitle = gui:label(winEcranAccueil, 15, 10, 200, 28)
     -- lblTitle:setFontSize(24)
@@ -80,7 +93,7 @@ function afficheEcranAccueil()
     lblPlay:setVerticalAlignment(CENTER_ALIGNMENT)
     lblPlay:setBorderSize(1)
     lblPlay:setRadius(10)
-    lblPlay:setBackgroundColor(COLOR_LIGHT_GREY)
+    lblPlay:setBackgroundColor(COLOR_BUTTON)
     lblPlay:setText("Jouer")
     lblPlay:onClick(function() afficheEcranJeu(); end)
 
@@ -90,7 +103,7 @@ function afficheEcranAccueil()
     lblQuit:setVerticalAlignment(CENTER_ALIGNMENT)
     lblQuit:setBorderSize(1)
     lblQuit:setRadius(10)
-    lblQuit:setBackgroundColor(COLOR_LIGHT_GREY)
+    lblQuit:setBackgroundColor(COLOR_BUTTON)
     lblQuit:setText("Quitter")
     lblQuit:onClick(function() gui:setWindow(nil); end)
     print("dbg-finEcranAccueil")
@@ -115,7 +128,23 @@ function afficheEcranGameOver()
     local winEcranGameOver = manageWindow()
 
     local gameoverCanvas = gui:canvas(winEcranGameOver, 0, 0, 320, 480)
-    local imageGameover = gui:image(gameoverCanvas, "GameOver.png", 0, 0, 320, 480, COLOR_DARK)
+    local imageGameover = gui:image(gameoverCanvas, "GameOver.png", 0, 0, 320, 480, COLOR_BACKGROUND)
+
+    local scoreFinal = gui:label(winEcranGameOver, 80, 200, 160, 30)
+    scoreFinal:setBackgroundColor(COLOR_BACKGROUND)
+    scoreFinal:setText("Score: " .. score)
+    scoreFinal:setFontSize(20)
+    scoreFinal:setTextColor(COLOR_FINAL_SCORE)
+    scoreFinal:setHorizontalAlignment(CENTER_ALIGNMENT)
+    scoreFinal:setVerticalAlignment(CENTER_ALIGNMENT)
+
+    local bestScore = gui:label(winEcranGameOver, 80, 240, 160, 30)
+    bestScore:setBackgroundColor(COLOR_BACKGROUND)
+    bestScore:setText("Meilleur: " .. maxScore)
+    bestScore:setFontSize(20)
+    bestScore:setTextColor(COLOR_FINAL_MAX)
+    bestScore:setHorizontalAlignment(CENTER_ALIGNMENT)
+    bestScore:setVerticalAlignment(CENTER_ALIGNMENT)
 
     -- local lblTitle = gui:label(winEcranGameOver, 15, 10, 200, 28)
     -- lblTitle:setFontSize(24)
@@ -127,7 +156,7 @@ function afficheEcranGameOver()
     lblAccueil:setVerticalAlignment(CENTER_ALIGNMENT)
     lblAccueil:setBorderSize(1)
     lblAccueil:setRadius(10)
-    lblAccueil:setBackgroundColor(COLOR_LIGHT_GREY)
+    lblAccueil:setBackgroundColor(COLOR_BUTTON)
     lblAccueil:setText("Accueil")
     lblAccueil:onClick(function() afficheEcranAccueil() end)
 
@@ -137,7 +166,7 @@ function afficheEcranGameOver()
     lblQuit:setVerticalAlignment(CENTER_ALIGNMENT)
     lblQuit:setBorderSize(1)
     lblQuit:setRadius(10)
-    lblQuit:setBackgroundColor(COLOR_LIGHT_GREY)
+    lblQuit:setBackgroundColor(COLOR_BUTTON)
     lblQuit:setText("Quitter")
     lblQuit:onClick(function() gui:setWindow(nil); end)
     print("dbg-finEcranGameOver")
@@ -160,26 +189,21 @@ function afficheEcranJeu()
     
     local winEcranJeu = manageWindow()
 
-    local statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
-    statusBar:setBackgroundColor(COLOR_DARK)
-    statusBar:setText("Score: 0")
+    statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
+    statusBar:setBackgroundColor(COLOR_BACKGROUND)
+    statusBar:setText("Score: " .. score .. " | Max: " .. maxScore)
     statusBar:setFontSize(20)
-    statusBar:setTextColor(COLOR_GREEN)
+    statusBar:setTextColor(COLOR_INGAME_SCORE)
     statusBar:setHorizontalAlignment(CENTER_ALIGNMENT)
     statusBar:setVerticalAlignment(CENTER_ALIGNMENT)
-
-    local statusBorderTop = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, 1)
-    statusBorderTop:setBackgroundColor(BORDER_COLOR)
-
-    local statusBorderLeft = gui:label(winEcranJeu, 0, 0, 1, STATUS_BAR_HEIGHT)
-    statusBorderLeft:setBackgroundColor(BORDER_COLOR)
-
-    local statusBorderRight = gui:label(winEcranJeu, SCREEN_WIDTH - 1, 0, 1, STATUS_BAR_HEIGHT)
-    statusBorderRight:setBackgroundColor(BORDER_COLOR)
+    statusBar:setBorderColor(COLOR_BORDER)
+    statusBar:setBorderSize(1)
 
     snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
     food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
     direction = "down"
+    score = 0
+    statusBar:setText("Score: 0")
     gameRunning = true
 
     local canvasW = cols * CELL_SIZE
@@ -187,37 +211,36 @@ function afficheEcranJeu()
     drawRect_canvas = gui:canvas(winEcranJeu, paddingX, STATUS_BAR_HEIGHT + paddingY, canvasW, canvasH)
 
     drawRect_canvas:onTouch(function(a)
-        local px = (snake[1].x - 1) * CELL_SIZE
-        local py = (snake[1].y - 1) * CELL_SIZE
-        local diff = {x=px - a[1], y=py - a[2]}
-        print(diff.x)
-        print(diff.y)
-        if (math.abs(diff.x) > math.abs(diff.y)) then
-            if(direction ~= "right" and direction ~= "left") then
-                if(diff.x < 0) then
-                    direction = "right"
-                else
-                    direction = "left"
-                end
+        local touchX = a[1]
+        local touchY = a[2]
+        
+        local centerX = canvasW / 2
+        local centerY = canvasH / 2
+        
+        local diffX = touchX - centerX
+        local diffY = touchY - centerY
+        
+        if math.abs(diffX) > math.abs(diffY) then
+            if diffX > 0 and direction ~= "left" then
+                direction = "right"
+            elseif diffX < 0 and direction ~= "right" then
+                direction = "left"
             end
         else
-            if(direction ~= "down" and direction ~= "up") then
-                if(diff.y < 0) then
-                    direction = "down"
-                else
-                    direction = "up"
-                end
+            if diffY < 0 and direction ~= "down" then
+                direction = "up"
+            elseif diffY > 0 and direction ~= "up" then
+                direction = "down"
             end
         end
-        print(direction)
     end)
 
-    drawRect_canvas:fillRect(0, 0, canvasW, canvasH, COLOR_DARK)
+    drawRect_canvas:fillRect(0, 0, canvasW, canvasH, COLOR_BACKGROUND)
 
-    drawRect_canvas:fillRect(0, 0, canvasW, 1, BORDER_COLOR)
-    drawRect_canvas:fillRect(0, canvasH - 1, canvasW, 1, BORDER_COLOR)
-    drawRect_canvas:fillRect(0, 0, 1, canvasH, BORDER_COLOR)
-    drawRect_canvas:fillRect(canvasW - 1, 0, 1, canvasH, BORDER_COLOR)
+    drawRect_canvas:fillRect(0, 0, canvasW, 1, COLOR_BORDER)
+    drawRect_canvas:fillRect(0, canvasH - 1, canvasW, 1, COLOR_BORDER)
+    drawRect_canvas:fillRect(0, 0, 1, canvasH, COLOR_BORDER)
+    drawRect_canvas:fillRect(canvasW - 1, 0, 1, canvasH, COLOR_BORDER)
 
     drawSnake()
     drawFood()
@@ -230,17 +253,19 @@ function drawSnake()
     for i, part in ipairs(snake) do
         local px = (part.x - 1) * CELL_SIZE + 1
         local py = (part.y - 1) * CELL_SIZE + 1
-        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_GREEN)
+        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_SNAKE)
     end
 end
 
 function drawFood()
     local px = (food.x - 1) * CELL_SIZE + 1
     local py = (food.y - 1) * CELL_SIZE + 1
-    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_RED)
+    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_FOOD)
 end
 
 function updateSnake()
+    score = math.max(0, score - 1)
+    statusBar:setText("Score: " .. score .. " | Max: " .. maxScore)
     local head = {x=snake[1].x, y=snake[1].y}
 
     if direction == "right" then
@@ -271,6 +296,9 @@ function updateSnake()
     table.insert(snake, 1, head)
 
     if snake[1].x == food.x and snake[1].y == food.y then
+        score = score + FOOD_POINTS + (#snake - 3) * 5
+        if score > maxScore then maxScore = score end
+        statusBar:setText("Score: " .. score .. " | Max: " .. maxScore)
         -- Générer une nouvelle position pour la nourriture
         -- qui n'est pas sur le serpent
         repeat
@@ -280,13 +308,13 @@ function updateSnake()
         local tail = table.remove(snake)
         local px = (tail.x - 1) * CELL_SIZE + 1
         local py = (tail.y - 1) * CELL_SIZE + 1
-        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_DARK)
+        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_BACKGROUND)
     end
 
     -- Afficher que la tête
     local px = (head.x - 1) * CELL_SIZE + 1
     local py = (head.y - 1) * CELL_SIZE + 1
-    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_GREEN)
+    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_SNAKE)
 end
 
 function isFoodOnSnake(food)
