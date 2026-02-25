@@ -23,7 +23,7 @@ local oldWin
 local rythme
 local gameRunning = false
 local gameOverTimeout
-local frameCounter = 0
+local lastMoveTime = 0
 
 function int(x)
     return math.floor(x)
@@ -147,7 +147,7 @@ function afficheEcranAccueil()
         time:removeTimeout(gameOverTimeout)
         gameOverTimeout = nil
     end
-    frameCounter = 0
+    lastMoveTime = 0
     gameRunning = false
     
     local winEcranAccueil = manageWindow()
@@ -191,7 +191,7 @@ function afficheEcranGameOver()
     print("dbg-afficheEcranGameOver")
 
     gameRunning = false
-    frameCounter = 0
+    lastMoveTime = 0
     -- Arrête le timer AVANT manageWindow() pour éviter tout conflit
     if rythme then
         time:removeInterval(rythme)
@@ -261,7 +261,7 @@ function afficheEcranJeu()
     end
     
     local winEcranJeu = manageWindow()
-    frameCounter = 0
+    lastMoveTime = time:monotonic()
 
     statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
     statusBar:setBackgroundColor(COLOR_BACKGROUND)
@@ -329,7 +329,7 @@ function afficheEcranJeu()
     drawSnake()
     drawFood()
 
-    rythme = time:setInterval(update, 100)
+    rythme = time:setInterval(update, 50)
 
 end
 
@@ -412,11 +412,9 @@ function isFoodOnSnake(food)
 end
 
 function update()
-    local skip = math.ceil(getSpeed() / 100)
-    frameCounter = frameCounter + 1
-
-    if frameCounter >= skip then
-        frameCounter = 0
+    local now = time:monotonic()
+    if now - lastMoveTime >= getSpeed() then
+        lastMoveTime = now
         updateSnake()
     end
 
