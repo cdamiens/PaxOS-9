@@ -16,14 +16,21 @@
 --   - Commence à 400ms, diminue de 10ms par segment
 --   - Plafond à 100ms
 --   - Affichée via des chevrons (1 à 5)
+--
+-- NOTE IMPORTANTE - BUG ESP32:
+-- NE JAMAIS utiliser time:removeInterval() + time:setInterval() dans un callback Lua!
+-- Cela cause un crash "LoadProhibited" sur ESP32 car le callback FreeRTOS sous-jacent
+-- pointe vers l'objet LuaTimeInterval supprimé.
+-- Solution: Utiliser un intervalle fixe et gérer la logique de timing via time:monotonic().
 -- ============================================================================
 
-local direction = "down"
-local oldWin
-local rythme
-local gameRunning = false
-local gameOverTimeout
-local lastMoveTime = 0
+local direction = "down"         -- Direction actuelle du serpent
+local oldWin                     -- Fenêtre précédente pour cleanup
+local rythme                     -- ID intervalle de rendu
+local gameRunning = false        -- État du jeu
+local gameOverTimeout            -- Timeout différé pour écran game over
+local lastMoveTime = 0           -- Timestamp dernier mouvement (gère la vitesse)
+local directionChanged = false   -- Flag pour mouvement immédiat au touch
 
 function int(x)
     return math.floor(x)
@@ -83,10 +90,11 @@ local FOOD_POINTS = math.floor(cols * rows / 10)
 -- SYSTÈME DE VITESSE
 -- ============================================================================
 -- Le serpent accélère à mesure qu'il grandit
--- Formule : vitesse = GAME_SPEED - (longueur_serpent * SPEED_DECREASE)
-local GAME_SPEED = 400     -- Vitesse initiale en ms (lent)
-local SPEED_DECREASE = 10 -- Millisecondes retirées par segment
-local MIN_SPEED = 100     -- Vitesse minimum absolue (très rapide)
+-- Formule: vitesse = GAME_SPEED - (longueur_serpent * SPEED_DECREASE)
+-- Le mouvement utilise lastMoveTime + getSpeed() pour gérer la vitesse.
+local GAME_SPEED = 400           -- Vitesse initiale en ms (lent)
+local SPEED_DECREASE = 10        -- Millisecondes retirées par segment
+local MIN_SPEED = 100            -- Vitesse minimum absolue (très rapide)
 
 -- Retourne la vitesse actuelle en millisecondes
 local function getSpeed()
@@ -148,6 +156,7 @@ function afficheEcranAccueil()
         gameOverTimeout = nil
     end
     lastMoveTime = 0
+    directionChanged = false
     gameRunning = false
     
     local winEcranAccueil = manageWindow()
@@ -192,6 +201,7 @@ function afficheEcranGameOver()
 
     gameRunning = false
     lastMoveTime = 0
+    directionChanged = false
     -- Arrête le timer AVANT manageWindow() pour éviter tout conflit
     if rythme then
         time:removeInterval(rythme)
@@ -302,18 +312,25 @@ function afficheEcranJeu()
         local diffX = touchX - centerX
         local diffY = touchY - centerY
         
+        local newDirection = direction
+        
         if math.abs(diffX) > math.abs(diffY) then
             if diffX > 0 and direction ~= "left" then
-                direction = "right"
+                newDirection = "right"
             elseif diffX < 0 and direction ~= "right" then
-                direction = "left"
+                newDirection = "left"
             end
         else
             if diffY < 0 and direction ~= "down" then
-                direction = "up"
+                newDirection = "up"
             elseif diffY > 0 and direction ~= "up" then
-                direction = "down"
+                newDirection = "down"
             end
+        end
+        
+        if newDirection ~= direction then
+            direction = newDirection
+            directionChanged = true
         end
     end)
 
@@ -411,10 +428,20 @@ function isFoodOnSnake(food)
     return false
 end
 
+-- ============================================================================
+-- BOUCLE PRINCIPALE DU JEU
+-- ============================================================================
+-- Rendu: 50ms fixe (20 FPS)
+-- Mouvement: basé sur getSpeed() via time:monotonic()
+-- Réactivité: mouvement immédiat si directionChanged = true
+-- ============================================================================
 function update()
     local now = time:monotonic()
-    if now - lastMoveTime >= getSpeed() then
+    local speed = getSpeed()
+    
+    if directionChanged or (now - lastMoveTime >= speed) then
         lastMoveTime = now
+        directionChanged = false
         updateSnake()
     end
 
