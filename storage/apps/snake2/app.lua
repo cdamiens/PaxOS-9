@@ -29,7 +29,7 @@ local direction = "down"         -- Direction actuelle du serpent
 local oldWin                     -- Fenêtre précédente pour cleanup
 local rythme                     -- ID intervalle de rendu
 local gameRunning = false        -- État du jeu
-local gameOverTimeout            -- Timeout différé pour écran game over
+local gameOverTimeout            -- Timeout différé pour écran game over (nettoyé automatiquement)
 local lastMoveTime = 0           -- Timestamp dernier mouvement (gère la vitesse)
 local directionChanged = false   -- Flag pour mouvement immédiat au touch
 
