@@ -18,10 +18,11 @@
 --   - Affichée via des chevrons (1 à 5)
 --
 -- NOTE IMPORTANTE - BUG ESP32:
--- NE JAMAIS utiliser time:removeInterval() + time:setInterval() dans un callback Lua!
+-- NE JAMAIS utiliser time:removeInterval() ou time:removeTimeout() dans un callback Lua!
 -- Cela cause un crash "LoadProhibited" sur ESP32 car le callback FreeRTOS sous-jacent
--- pointe vers l'objet LuaTimeInterval supprimé.
+-- pointe vers l'objet supprimé.
 -- Solution: Utiliser un intervalle fixe et gérer la logique de timing via time:monotonic().
+-- Pour les timeout différés, ne pas les supprimer dans cleanup: le système les nettoie automatiquement.
 -- ============================================================================
 
 local direction = "down"         -- Direction actuelle du serpent
@@ -31,6 +32,50 @@ local gameRunning = false        -- État du jeu
 local gameOverTimeout            -- Timeout différé pour écran game over
 local lastMoveTime = 0           -- Timestamp dernier mouvement (gère la vitesse)
 local directionChanged = false   -- Flag pour mouvement immédiat au touch
+
+-- ============================================================================
+-- COULEURS DU JEU
+-- ============================================================================
+-- Toutes les couleurs utilisées dans le jeu pour une modification centralisée
+local COLOR_BORDER = COLOR_YELLOW     -- Bordures (zone de jeu + barre de statut)
+local COLOR_BACKGROUND = COLOR_DARK    -- Fond de la zone de jeu
+local COLOR_SNAKE = COLOR_GREEN       -- Corps du serpent
+local COLOR_FOOD = COLOR_RED           -- Nourriture
+local COLOR_INGAME_SCORE = COLOR_GREEN -- Texte du score en jeu
+local COLOR_FINAL_SCORE = COLOR_GREEN  -- Texte du score en écran game over
+local COLOR_FINAL_MAX = COLOR_YELLOW   -- Texte du meilleur score
+local COLOR_BUTTON = COLOR_LIGHT_GREY  -- Boutons
+
+-- ============================================================================
+-- FONCTIONS HELPER
+-- ============================================================================
+
+-- Nettoyage centralisé: arrêt des timers et reset des variables de jeu
+local function cleanupGame()
+    if rythme then
+        time:removeInterval(rythme)
+        rythme = nil
+    end
+    -- gameOverTimeout n'est pas supprimé ici car le callback est peut-être en cours d'exécution
+    -- Le système le nettoiera automatiquement après son exécution
+    gameOverTimeout = nil
+    lastMoveTime = 0
+    directionChanged = false
+    gameRunning = false
+end
+
+-- Helper pour créer un bouton standard
+local function createButton(parent, x, y, text, onClick)
+    local btn = gui:label(parent, x, y, 100, 30)
+    btn:setFontSize(20)
+    btn:setHorizontalAlignment(CENTER_ALIGNMENT)
+    btn:setVerticalAlignment(CENTER_ALIGNMENT)
+    btn:setBorderSize(1)
+    btn:setRadius(10)
+    btn:setBackgroundColor(COLOR_BUTTON)
+    btn:setText(text)
+    btn:onClick(onClick)
+end
 
 function int(x)
     return math.floor(x)
@@ -48,19 +93,6 @@ local CASE_SIZE = CELL_SIZE - GAP  -- Taille visuelle de la case
 local STATUS_BAR_HEIGHT = 40
 local SCREEN_WIDTH = 320
 local SCREEN_HEIGHT = 480
-
--- ============================================================================
--- COULEURS DU JEU
--- ============================================================================
--- Toutes les couleurs utilisées dans le jeu pour une modification centralisée
-local COLOR_BORDER = COLOR_YELLOW     -- Bordures (zone de jeu + barre de statut)
-local COLOR_BACKGROUND = COLOR_DARK    -- Fond de la zone de jeu
-local COLOR_SNAKE = COLOR_GREEN       -- Corps du serpent
-local COLOR_FOOD = COLOR_RED           -- Nourriture
-local COLOR_INGAME_SCORE = COLOR_GREEN -- Texte du score en jeu
-local COLOR_FINAL_SCORE = COLOR_GREEN  -- Texte du score en écran game over
-local COLOR_FINAL_MAX = COLOR_YELLOW   -- Texte du meilleur score
-local COLOR_BUTTON = COLOR_LIGHT_GREY  -- Boutons
 
 -- ============================================================================
 -- CALCUL DE LA GRILLE
@@ -146,49 +178,17 @@ end
 function afficheEcranAccueil()
     print("dbg-afficheEcranAccueil")
     
-    -- Nettoyage : arrêter le timer de jeu et annuler le timeout game over
-    if rythme then
-        time:removeInterval(rythme)
-        rythme = nil
-    end
-    if gameOverTimeout then
-        time:removeTimeout(gameOverTimeout)
-        gameOverTimeout = nil
-    end
-    lastMoveTime = 0
-    directionChanged = false
-    gameRunning = false
+    cleanupGame()
     
     local winEcranAccueil = manageWindow()
 
     local accueilCanvas = gui:canvas(winEcranAccueil, 0, 0, 320, 480)
     local imageAccueil = gui:image(accueilCanvas, "PaxoSnake.png", 0, 0, 320, 480, COLOR_BACKGROUND)
 
-    -- local lblTitle = gui:label(winEcranAccueil, 15, 10, 200, 28)
-    -- lblTitle:setFontSize(24)
-    -- lblTitle:setText("Snake")
+    createButton(winEcranAccueil, 40, 440, "Jouer", function() afficheEcranJeu() end)
+    createButton(winEcranAccueil, 180, 440, "Quitter", function() gui:setWindow(nil) end)
 
-    local lblPlay = gui:label(winEcranAccueil, 40, 440, 100, 30)
-    lblPlay:setFontSize(20)
-    lblPlay:setHorizontalAlignment(CENTER_ALIGNMENT)
-    lblPlay:setVerticalAlignment(CENTER_ALIGNMENT)
-    lblPlay:setBorderSize(1)
-    lblPlay:setRadius(10)
-    lblPlay:setBackgroundColor(COLOR_BUTTON)
-    lblPlay:setText("Jouer")
-    lblPlay:onClick(function() afficheEcranJeu(); end)
-
-    local lblQuit = gui:label(winEcranAccueil, 180, 440, 100, 30)
-    lblQuit:setFontSize(20)
-    lblQuit:setHorizontalAlignment(CENTER_ALIGNMENT)
-    lblQuit:setVerticalAlignment(CENTER_ALIGNMENT)
-    lblQuit:setBorderSize(1)
-    lblQuit:setRadius(10)
-    lblQuit:setBackgroundColor(COLOR_BUTTON)
-    lblQuit:setText("Quitter")
-    lblQuit:onClick(function() gui:setWindow(nil); end)
     print("dbg-finEcranAccueil")
-
 end
 
 -- ------------------------------------------------
@@ -199,14 +199,7 @@ end
 function afficheEcranGameOver()
     print("dbg-afficheEcranGameOver")
 
-    gameRunning = false
-    lastMoveTime = 0
-    directionChanged = false
-    -- Arrête le timer AVANT manageWindow() pour éviter tout conflit
-    if rythme then
-        time:removeInterval(rythme)
-        rythme = nil
-    end
+    cleanupGame()
     
     local winEcranGameOver = manageWindow()
 
@@ -229,31 +222,10 @@ function afficheEcranGameOver()
     bestScore:setHorizontalAlignment(CENTER_ALIGNMENT)
     bestScore:setVerticalAlignment(CENTER_ALIGNMENT)
 
-    -- local lblTitle = gui:label(winEcranGameOver, 15, 10, 200, 28)
-    -- lblTitle:setFontSize(24)
-    -- lblTitle:setText("Game Over")
+    createButton(winEcranGameOver, 40, 440, "Accueil", function() afficheEcranAccueil() end)
+    createButton(winEcranGameOver, 180, 440, "Quitter", function() gui:setWindow(nil) end)
 
-    local lblAccueil = gui:label(winEcranGameOver, 40, 440, 100, 30)
-    lblAccueil:setFontSize(20)
-    lblAccueil:setHorizontalAlignment(CENTER_ALIGNMENT)
-    lblAccueil:setVerticalAlignment(CENTER_ALIGNMENT)
-    lblAccueil:setBorderSize(1)
-    lblAccueil:setRadius(10)
-    lblAccueil:setBackgroundColor(COLOR_BUTTON)
-    lblAccueil:setText("Accueil")
-    lblAccueil:onClick(function() afficheEcranAccueil() end)
-
-    local lblQuit = gui:label(winEcranGameOver, 180, 440, 100, 30)
-    lblQuit:setFontSize(20)
-    lblQuit:setHorizontalAlignment(CENTER_ALIGNMENT)
-    lblQuit:setVerticalAlignment(CENTER_ALIGNMENT)
-    lblQuit:setBorderSize(1)
-    lblQuit:setRadius(10)
-    lblQuit:setBackgroundColor(COLOR_BUTTON)
-    lblQuit:setText("Quitter")
-    lblQuit:onClick(function() gui:setWindow(nil); end)
     print("dbg-finEcranGameOver")
-
 end
 
 -- ------------------------------------------------
@@ -264,7 +236,7 @@ end
 function afficheEcranJeu()
     print("dbg-afficheEcranJeu")
     
-    -- Annule un timeout game over en attente (si on revient au jeu depuis l'accueil)
+    -- Annule un timeout game over en attente
     if gameOverTimeout then
         time:removeTimeout(gameOverTimeout)
         gameOverTimeout = nil
