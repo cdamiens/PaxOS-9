@@ -34,6 +34,73 @@ local lastMoveTime = 0           -- Timestamp dernier mouvement (gère la vitess
 local directionChanged = false   -- Flag pour mouvement immédiat au touch
 
 -- ============================================================================
+-- PRÉFÉRENCES UTILISATEUR
+-- ============================================================================
+
+-- Préférences sauvegardées dans snake_prefs.json
+local prefs = {
+    language = "fr",       -- "fr" | "en"
+    difficulty = "easy"   -- "easy" | "medium" | "hard"
+}
+
+-- Dictionnaires multilingues
+local strings = {
+    fr = {
+        title = "Snake",
+        play = "Jouer",
+        quit = "Quitter",
+        settings = "Paramètres",
+        instructions = "Instructions",
+        difficulty = "Difficulté",
+        easy = "Facile",
+        medium = "Moyen",
+        hard = "Difficile",
+        back = "Retour",
+        titleInstructions = "Comment jouer",
+        instructionText = "Touchez l'écran par rapport au centre pour choisir la direction du serpent",
+        titleSettings = "Paramètres",
+        language = "Langue",
+        start = "Commencer"
+    },
+    en = {
+        title = "Snake",
+        play = "Play",
+        quit = "Quit",
+        settings = "Settings",
+        instructions = "Instructions",
+        difficulty = "Difficulty",
+        easy = "Easy",
+        medium = "Medium",
+        hard = "Hard",
+        back = "Back",
+        titleInstructions = "How to play",
+        instructionText = "Touch the screen relative to the center to choose the snake's direction",
+        titleSettings = "Settings",
+        language = "Language",
+        start = "Start"
+    }
+}
+
+-- Configuration selon la difficulté
+local difficultyConfig = {
+    easy = {
+        speed = 400,
+        snakeColor = COLOR_GREEN,
+        borderColor = COLOR_GREEN
+    },
+    medium = {
+        speed = 300,
+        snakeColor = COLOR_YELLOW,
+        borderColor = COLOR_YELLOW
+    },
+    hard = {
+        speed = 200,
+        snakeColor = COLOR_RED,
+        borderColor = COLOR_RED
+    }
+}
+
+-- ============================================================================
 -- COULEURS DU JEU
 -- ============================================================================
 -- Toutes les couleurs utilisées dans le jeu pour une modification centralisée
@@ -64,9 +131,9 @@ local function cleanupGame()
     gameRunning = false
 end
 
--- Helper pour créer un bouton standard
-local function createButton(parent, x, y, text, onClick)
-    local btn = gui:label(parent, x, y, 100, 30)
+-- Helper pour créer un bouton standard (texte direct, dimensions paramétrables)
+local function createButton(parent, x, y, width, height, text, onClick)
+    local btn = gui:label(parent, x, y, width, height)
     btn:setFontSize(20)
     btn:setHorizontalAlignment(CENTER_ALIGNMENT)
     btn:setVerticalAlignment(CENTER_ALIGNMENT)
@@ -75,6 +142,36 @@ local function createButton(parent, x, y, text, onClick)
     btn:setBackgroundColor(COLOR_BUTTON)
     btn:setText(text)
     btn:onClick(onClick)
+end
+
+-- Traduction: retourne la chaîne dans la langue actuelle
+local function t(key)
+    return strings[prefs.language][key]
+end
+
+-- Charge les préférences depuis le fichier JSON
+local function loadPreferences()
+    local success, result = pcall(loadTable, "snake_prefs.json")
+    if success and result then
+        prefs = result
+    else
+        -- Valeurs par défaut si fichier absent
+        prefs = { language = "fr", difficulty = "easy" }
+        pcall(saveTable, "snake_prefs.json", prefs)
+    end
+end
+
+-- Sauvegarde les préférences dans le fichier JSON
+local function savePreferences()
+    pcall(saveTable, "snake_prefs.json", prefs)
+end
+
+-- Applique les couleurs et la vitesse selon la difficulté
+local function applyDifficulty()
+    local diff = difficultyConfig[prefs.difficulty]
+    COLOR_SNAKE = diff.snakeColor
+    COLOR_BORDER = diff.borderColor
+    GAME_SPEED = diff.speed
 end
 
 function int(x)
@@ -185,8 +282,9 @@ function afficheEcranAccueil()
     local accueilCanvas = gui:canvas(winEcranAccueil, 0, 0, 320, 480)
     local imageAccueil = gui:image(accueilCanvas, "PaxoSnake.png", 0, 0, 320, 480, COLOR_BACKGROUND)
 
-    createButton(winEcranAccueil, 40, 440, "Jouer", function() afficheEcranJeu() end)
-    createButton(winEcranAccueil, 180, 440, "Quitter", function() gui:setWindow(nil) end)
+    createButton(winEcranAccueil, 10, 440, 95, 30, t("play"), function() afficheEcranJeu() end)
+    createButton(winEcranAccueil, 112, 440, 95, 30, t("settings"), function() afficheEcranSettings() end)
+    createButton(winEcranAccueil, 215, 440, 95, 30, t("quit"), function() gui:setWindow(nil) end)
 
     print("dbg-finEcranAccueil")
 end
@@ -222,10 +320,131 @@ function afficheEcranGameOver()
     bestScore:setHorizontalAlignment(CENTER_ALIGNMENT)
     bestScore:setVerticalAlignment(CENTER_ALIGNMENT)
 
-    createButton(winEcranGameOver, 40, 440, "Accueil", function() afficheEcranAccueil() end)
-    createButton(winEcranGameOver, 180, 440, "Quitter", function() gui:setWindow(nil) end)
+    createButton(winEcranGameOver, 40, 440, 100, 30, t("back"), function() afficheEcranAccueil() end)
+    createButton(winEcranGameOver, 180, 440, 100, 30, t("quit"), function() gui:setWindow(nil) end)
 
     print("dbg-finEcranGameOver")
+end
+
+-- ------------------------------------------------
+--        ÉCRAN INSTRUCTIONS
+-- ------------------------------------------------
+
+function afficheEcranInstructions()
+    print("dbg-afficheEcranInstructions")
+    
+    local win = manageWindow()
+    
+    local canvas = gui:canvas(win, 0, 0, 320, 480)
+    canvas:fillRect(0, 0, 320, 480, COLOR_BACKGROUND)
+    
+    local title = gui:label(win, 0, 20, 320, 40)
+    title:setFontSize(28)
+    title:setText(t("titleInstructions"))
+    title:setTextColor(COLOR_YELLOW)
+    title:setBackgroundColor(COLOR_BACKGROUND)
+    title:setHorizontalAlignment(CENTER_ALIGNMENT)
+    
+    local instructions = gui:label(win, 20, 80, 280, 200)
+    instructions:setFontSize(18)
+    instructions:setText(t("instructionText"))
+    instructions:setTextColor(COLOR_WHITE)
+    instructions:setBackgroundColor(COLOR_BACKGROUND)
+    instructions:setHorizontalAlignment(CENTER_ALIGNMENT)
+    instructions:setVerticalAlignment(CENTER_ALIGNMENT)
+    
+    createButton(win, 40, 420, 240, 40, t("back"), function() afficheEcranSettings() end)
+    
+    print("dbg-finEcranInstructions")
+end
+
+-- ------------------------------------------------
+--        ÉCRAN PARAMÈTRES
+-- ------------------------------------------------
+
+function afficheEcranSettings()
+    print("dbg-afficheEcranSettings")
+    
+    local win = manageWindow()
+    
+    local canvas = gui:canvas(win, 0, 0, 320, 480)
+    canvas:fillRect(0, 0, 320, 480, COLOR_BACKGROUND)
+    
+    local title = gui:label(win, 0, 20, 320, 40)
+    title:setFontSize(28)
+    title:setText(t("titleSettings"))
+    title:setTextColor(COLOR_YELLOW)
+    title:setBackgroundColor(COLOR_BACKGROUND)
+    title:setHorizontalAlignment(CENTER_ALIGNMENT)
+    
+    -- Langue
+    local langLabel = gui:label(win, 20, 90, 280, 30)
+    langLabel:setFontSize(20)
+    langLabel:setText(t("language") .. ":")
+    langLabel:setTextColor(COLOR_WHITE)
+    langLabel:setBackgroundColor(COLOR_BACKGROUND)
+    
+    local langFR = gui:label(win, 40, 130, 100, 35)
+    langFR:setFontSize(18)
+    langFR:setText("Français")
+    langFR:setBackgroundColor(prefs.language == "fr" and COLOR_SUCCESS or COLOR_BUTTON)
+    langFR:setHorizontalAlignment(CENTER_ALIGNMENT)
+    langFR:setVerticalAlignment(CENTER_ALIGNMENT)
+    langFR:setBorderSize(1)
+    langFR:setRadius(10)
+    langFR:onClick(function()
+        prefs.language = "fr"
+        savePreferences()
+        afficheEcranSettings()
+    end)
+    
+    local langEN = gui:label(win, 180, 130, 100, 35)
+    langEN:setFontSize(18)
+    langEN:setText("English")
+    langEN:setBackgroundColor(prefs.language == "en" and COLOR_SUCCESS or COLOR_BUTTON)
+    langEN:setHorizontalAlignment(CENTER_ALIGNMENT)
+    langEN:setVerticalAlignment(CENTER_ALIGNMENT)
+    langEN:setBorderSize(1)
+    langEN:setRadius(10)
+    langEN:onClick(function()
+        prefs.language = "en"
+        savePreferences()
+        afficheEcranSettings()
+    end)
+    
+    -- Difficulté
+    local diffLabel = gui:label(win, 20, 190, 280, 30)
+    diffLabel:setFontSize(20)
+    diffLabel:setText(t("difficulty") .. ":")
+    diffLabel:setTextColor(COLOR_WHITE)
+    diffLabel:setBackgroundColor(COLOR_BACKGROUND)
+    
+    local difficulties = {"easy", "medium", "hard"}
+    local diffX = {20, 120, 220}
+    
+    for i, diff in ipairs(difficulties) do
+        local btn = gui:label(win, diffX[i], 230, 80, 35)
+        btn:setFontSize(16)
+        btn:setText(t(diff))
+        btn:setBackgroundColor(prefs.difficulty == diff and difficultyConfig[diff].snakeColor or COLOR_BUTTON)
+        btn:setHorizontalAlignment(CENTER_ALIGNMENT)
+        btn:setVerticalAlignment(CENTER_ALIGNMENT)
+        btn:setBorderSize(1)
+        btn:setRadius(10)
+        btn:onClick(function()
+            prefs.difficulty = diff
+            savePreferences()
+            afficheEcranSettings()
+        end)
+    end
+    
+    -- Bouton Instructions
+    createButton(win, 40, 300, 240, 40, t("instructions"), function() afficheEcranInstructions() end)
+    
+    -- Bouton Retour
+    createButton(win, 40, 360, 240, 40, t("back"), function() afficheEcranAccueil() end)
+    
+    print("dbg-finEcranSettings")
 end
 
 -- ------------------------------------------------
@@ -244,6 +463,9 @@ function afficheEcranJeu()
     
     local winEcranJeu = manageWindow()
     lastMoveTime = time:monotonic()
+    
+    -- Applique les couleurs et vitesse selon la difficulté
+    applyDifficulty()
 
     statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
     statusBar:setBackgroundColor(COLOR_BACKGROUND)
@@ -422,9 +644,9 @@ end
 
 -- Point d'entrée du programme
 function run()
-    
+    loadPreferences()
     afficheEcranAccueil()
- 
+  
 end
 
 -- Point de sortie du programme
