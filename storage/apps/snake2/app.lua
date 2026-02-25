@@ -22,7 +22,8 @@ local direction = "down"
 local oldWin
 local rythme
 local gameRunning = false
-local gameOverTimeout  -- Permet de différer l'appel à afficheEcranGameOver
+local gameOverTimeout
+local frameCounter = 0
 
 function int(x)
     return math.floor(x)
@@ -146,6 +147,7 @@ function afficheEcranAccueil()
         time:removeTimeout(gameOverTimeout)
         gameOverTimeout = nil
     end
+    frameCounter = 0
     gameRunning = false
     
     local winEcranAccueil = manageWindow()
@@ -189,6 +191,7 @@ function afficheEcranGameOver()
     print("dbg-afficheEcranGameOver")
 
     gameRunning = false
+    frameCounter = 0
     -- Arrête le timer AVANT manageWindow() pour éviter tout conflit
     if rythme then
         time:removeInterval(rythme)
@@ -258,6 +261,7 @@ function afficheEcranJeu()
     end
     
     local winEcranJeu = manageWindow()
+    frameCounter = 0
 
     statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
     statusBar:setBackgroundColor(COLOR_BACKGROUND)
@@ -325,7 +329,7 @@ function afficheEcranJeu()
     drawSnake()
     drawFood()
 
-    rythme = time:setInterval(update, getSpeed())
+    rythme = time:setInterval(update, 100)
 
 end
 
@@ -379,15 +383,9 @@ function updateSnake()
     table.insert(snake, 1, head)
 
     if snake[1].x == food.x and snake[1].y == food.y then
-        -- Bonus progressif : +5 points par segment au-delà des 3 premiers
         score = score + FOOD_POINTS + (#snake - 3) * 5
         if score > maxScore then maxScore = score end
         statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. getSpeedString())
-        -- Mise à jour de la vitesse quand le serpent mange
-        time:removeInterval(rythme)
-        rythme = time:setInterval(update, getSpeed())
-        -- Générer une nouvelle position pour la nourriture
-        -- qui n'est pas sur le serpent
         repeat
             food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
         until not isFoodOnSnake(food)
@@ -414,7 +412,14 @@ function isFoodOnSnake(food)
 end
 
 function update()
-    updateSnake()
+    local skip = math.ceil(getSpeed() / 100)
+    frameCounter = frameCounter + 1
+
+    if frameCounter >= skip then
+        frameCounter = 0
+        updateSnake()
+    end
+
     drawFood()
 end
 
