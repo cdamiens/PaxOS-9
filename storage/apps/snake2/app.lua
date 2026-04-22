@@ -7,10 +7,10 @@
 -- la direction (haut/bas/gauche/droite)
 --
 -- Score :
---   - -1 point par mouvement
---   - +35 points de base par nourriture mangée
---   - Bonus de +5 points par segment supplémentaire du serpent
---   - Le score ne peut pas être négatif
+--   - Chaque nourriture rapporte entre 10 et 100 pts selon l'efficacité
+--     (100 - mouvements_depuis_dernier_repas * 2, minimum 10)
+--   - Bonus +5 pts par segment supplémentaire du serpent
+--   - Score toujours croissant (jamais négatif)
 --
 -- Vitesse :
 --   - Commence à 400ms, diminue de 10ms par segment
@@ -25,25 +25,47 @@
 -- Pour les timeout différés, ne pas les supprimer dans cleanup: le système les nettoie automatiquement.
 -- ============================================================================
 
-local direction = "down"         -- Direction actuelle du serpent
-local oldWin                     -- Fenêtre précédente pour cleanup
-local rythme                     -- ID intervalle de rendu
-local gameRunning = false        -- État du jeu
-local gameOverTimeout            -- Timeout différé pour écran game over (nettoyé automatiquement)
-local lastMoveTime = 0           -- Timestamp dernier mouvement (gère la vitesse)
-local directionChanged = false   -- Flag pour mouvement immédiat au touch
+-- ============================================================================
+-- DÉCLARATIONS ANTICIPÉES (forward declarations)
+-- Nécessaires pour les fonctions qui se référencent mutuellement
+-- ============================================================================
+local afficheEcranAccueil, afficheEcranGameOver, afficheEcranInstructions, afficheEcranSettings, afficheEcranJeu
+
+-- ============================================================================
+-- VARIABLES DE JEU
+-- ============================================================================
+local int = math.floor              -- alias local, évite le lookup global répété
+local direction = "down"            -- Direction actuelle du serpent
+local oldWin                        -- Fenêtre précédente pour cleanup
+local rythme                        -- ID intervalle de rendu
+local gameRunning = false           -- État du jeu
+local gameOverTimeout               -- Timeout différé pour écran game over (nettoyé automatiquement)
+local lastMoveTime = 0              -- Timestamp dernier mouvement (gère la vitesse)
+local directionChanged = false      -- Flag pour mouvement immédiat au touch
+
+local statusBar                     -- Barre de statut (score en jeu)
+local drawRect_canvas               -- Canvas de la zone de jeu
+local snake = {}                    -- Corps du serpent (liste de tables {x, y})
+local food = {x = 0, y = 0}        -- Position nourriture (table réutilisée, jamais réallouée)
+local headCell = {x = 0, y = 0}    -- Calcul tête pré-alloué (évite alloc à chaque mouvement)
+local bodySet = {}                  -- Lookup O(1) pour collision corps : clé = x*1000+y
+local foodDirty = true              -- Nourriture à redessiner ?
+local pixCoord = {}                 -- Coordonnées pixel pré-calculées (évite multiplications en hot path)
+local lastDisplayedScore = -1       -- Cache pour éviter setText inutiles
+local lastDisplayedSpeed = -1       -- Cache pour éviter setText inutiles
+local movesSinceFood = 0            -- Mouvements depuis le dernier repas (calcul score)
+local gameOverPending = false       -- Animation de mort en cours
+local flashState = 0                -- Demi-flash courant (1-6, soit 3 clignotements)
 
 -- ============================================================================
 -- PRÉFÉRENCES UTILISATEUR
 -- ============================================================================
 
--- Préférences sauvegardées dans snake_prefs.json
 local prefs = {
-    language = "fr",       -- "fr" | "en"
-    difficulty = "easy"   -- "easy" | "medium" | "hard"
+    language = "fr",
+    difficulty = "easy"
 }
 
--- Dictionnaires multilingues
 local strings = {
     fr = {
         title = "Snake",
@@ -81,57 +103,46 @@ local strings = {
     }
 }
 
--- Configuration selon la difficulté
 local difficultyConfig = {
-    easy = {
-        speed = 400,
-        snakeColor = COLOR_GREEN,
-        borderColor = COLOR_GREEN
-    },
-    medium = {
-        speed = 300,
-        snakeColor = COLOR_YELLOW,
-        borderColor = COLOR_YELLOW
-    },
-    hard = {
-        speed = 200,
-        snakeColor = COLOR_RED,
-        borderColor = COLOR_RED
-    }
+    easy   = { speed = 400, snakeColor = COLOR_GREEN,  borderColor = COLOR_GREEN  },
+    medium = { speed = 300, snakeColor = COLOR_YELLOW, borderColor = COLOR_YELLOW },
+    hard   = { speed = 200, snakeColor = COLOR_RED,    borderColor = COLOR_RED    }
 }
 
 -- ============================================================================
 -- COULEURS DU JEU
 -- ============================================================================
--- Toutes les couleurs utilisées dans le jeu pour une modification centralisée
-local COLOR_BORDER = COLOR_YELLOW     -- Bordures (zone de jeu + barre de statut)
-local COLOR_BACKGROUND = COLOR_DARK    -- Fond de la zone de jeu
-local COLOR_SNAKE = COLOR_GREEN       -- Corps du serpent
-local COLOR_FOOD = COLOR_RED           -- Nourriture
-local COLOR_INGAME_SCORE = COLOR_GREEN -- Texte du score en jeu
-local COLOR_FINAL_SCORE = COLOR_GREEN  -- Texte du score en écran game over
-local COLOR_FINAL_MAX = COLOR_YELLOW   -- Texte du meilleur score
-local COLOR_BUTTON = COLOR_LIGHT_GREY  -- Boutons
+local COLOR_BORDER       = COLOR_YELLOW
+local COLOR_BACKGROUND   = COLOR_DARK
+local COLOR_SNAKE        = COLOR_GREEN
+local COLOR_FOOD         = COLOR_RED
+local COLOR_INGAME_SCORE = COLOR_GREEN
+local COLOR_FINAL_SCORE  = COLOR_GREEN
+local COLOR_FINAL_MAX    = COLOR_YELLOW
+local COLOR_BUTTON       = COLOR_LIGHT_GREY
 
 -- ============================================================================
 -- FONCTIONS HELPER
 -- ============================================================================
 
--- Nettoyage centralisé: arrêt des timers et reset des variables de jeu
 local function cleanupGame()
     if rythme then
         time:removeInterval(rythme)
         rythme = nil
     end
-    -- gameOverTimeout n'est pas supprimé ici car le callback est peut-être en cours d'exécution
-    -- Le système le nettoiera automatiquement après son exécution
+    -- gameOverTimeout n'est pas supprimé ici : le callback est peut-être en cours d'exécution.
+    -- Le système le nettoiera automatiquement après son exécution.
     gameOverTimeout = nil
     lastMoveTime = 0
     directionChanged = false
     gameRunning = false
+    lastDisplayedScore = -1
+    lastDisplayedSpeed = -1
+    movesSinceFood = 0
+    gameOverPending = false
+    flashState = 0
 end
 
--- Helper pour créer un bouton standard (texte direct, dimensions paramétrables)
 local function createButton(parent, x, y, width, height, text, onClick)
     local btn = gui:label(parent, x, y, width, height)
     btn:setFontSize(20)
@@ -144,165 +155,266 @@ local function createButton(parent, x, y, width, height, text, onClick)
     btn:onClick(onClick)
 end
 
--- Traduction: retourne la chaîne dans la langue actuelle
 local function t(key)
     return strings[prefs.language][key]
 end
 
--- Charge les préférences depuis le fichier JSON
 local function loadPreferences()
     local success, result = pcall(loadTable, "snake_prefs.json")
     if success and result then
         prefs = result
     else
-        -- Valeurs par défaut si fichier absent
         prefs = { language = "fr", difficulty = "easy" }
         pcall(saveTable, "snake_prefs.json", prefs)
     end
 end
 
--- Sauvegarde les préférences dans le fichier JSON
 local function savePreferences()
     pcall(saveTable, "snake_prefs.json", prefs)
 end
 
--- Applique les couleurs et la vitesse selon la difficulté
 local function applyDifficulty()
     local diff = difficultyConfig[prefs.difficulty]
-    COLOR_SNAKE = diff.snakeColor
+    COLOR_SNAKE  = diff.snakeColor
     COLOR_BORDER = diff.borderColor
-    GAME_SPEED = diff.speed
-end
-
-function int(x)
-    return math.floor(x)
+    GAME_SPEED   = diff.speed
 end
 
 -- ============================================================================
 -- CONFIGURATION DE L'ÉCRAN
 -- ============================================================================
--- Dimensions des cases de la grille
-local CELL_SIZE = 20        -- Taille totale d'une case (case + espacement)
-local GAP = 2                -- Espace entre deux cases
-local CASE_SIZE = CELL_SIZE - GAP  -- Taille visuelle de la case
+local CELL_SIZE = 20
+local GAP       = 2
+local CASE_SIZE = CELL_SIZE - GAP
 
--- Dimensions de la barre de statut (en pixels)
 local STATUS_BAR_HEIGHT = 40
-local SCREEN_WIDTH = 320
-local SCREEN_HEIGHT = 480
-
--- ============================================================================
--- CALCUL DE LA GRILLE
--- ============================================================================
--- La grille est calculée automatiquement pour remplir la zone de jeu
--- en fonction de la taille des cases
+local SCREEN_WIDTH      = 320
+local SCREEN_HEIGHT     = 480
 
 local GAME_W = SCREEN_WIDTH
 local GAME_H = SCREEN_HEIGHT - STATUS_BAR_HEIGHT
 
-local cols = math.floor(GAME_W / CELL_SIZE)    -- Nombre de colonnes (16)
-local rows = math.floor(GAME_H / CELL_SIZE)   -- Nombre de lignes (22)
-local paddingX = math.floor((GAME_W - cols * CELL_SIZE) / 2)  -- Marge X (0)
-local paddingY = math.floor((GAME_H - rows * CELL_SIZE) / 2)  -- Marge Y (0)
+local cols     = int(GAME_W / CELL_SIZE)
+local rows     = int(GAME_H / CELL_SIZE)
+local paddingX = int((GAME_W - cols * CELL_SIZE) / 2)
+local paddingY = int((GAME_H - rows * CELL_SIZE) / 2)
 
-local gridSize = {w = cols, h = rows}  -- Dimensions de la grille de jeu
+local gridSize = {w = cols, h = rows}
+
+-- Pré-calcul des coordonnées pixel pour éviter multiplications et math.floor dans la boucle de jeu.
+-- pixCoord[i] = coordonnée pixel de départ de la case i (i ∈ [1, max(cols,rows)])
+do
+    local maxDim = math.max(cols, rows) + 1
+    for i = 1, maxDim do
+        pixCoord[i] = (i - 1) * CELL_SIZE + 1
+    end
+end
 
 -- ============================================================================
 -- SYSTÈME DE SCORE
 -- ============================================================================
-local score = 0          -- Score actuel de la partie en cours
-local maxScore = 0       -- Meilleur score atteint depuis l'installation
--- Points gagnés par nourriture : (nb cases écran) / 10 = 35 points
-local FOOD_POINTS = math.floor(cols * rows / 10)
+local score    = 0
+local maxScore = 0
 
 -- ============================================================================
 -- SYSTÈME DE VITESSE
 -- ============================================================================
--- Le serpent accélère à mesure qu'il grandit
--- Formule: vitesse = GAME_SPEED - (longueur_serpent * SPEED_DECREASE)
--- Le mouvement utilise lastMoveTime + getSpeed() pour gérer la vitesse.
-local GAME_SPEED = 400           -- Vitesse initiale en ms (lent)
-local SPEED_DECREASE = 10        -- Millisecondes retirées par segment
-local MIN_SPEED = 100            -- Vitesse minimum absolue (très rapide)
+local GAME_SPEED     = 400
+local SPEED_DECREASE = 10
+local MIN_SPEED      = 100
 
--- Retourne la vitesse actuelle en millisecondes
 local function getSpeed()
-    if not snake or #snake == 0 then
-        return GAME_SPEED
-    end
-    local speed = GAME_SPEED - (#snake * SPEED_DECREASE)
-    return math.max(speed, MIN_SPEED)
+    if not snake or #snake == 0 then return GAME_SPEED end
+    return math.max(GAME_SPEED - (#snake * SPEED_DECREASE), MIN_SPEED)
 end
 
--- Retourne le nombre de chevrons (1-5) selon la vitesse
--- Échelle : 400ms = 1 chevron, 340ms = 2, 280ms = 3, 220ms = 4, 160ms = 5
+-- Retourne le nombre de chevrons (1-5) correspondant à la vitesse courante
 local function getSpeedChevrons()
-    local speed = getSpeed()
-    local diff = GAME_SPEED - speed
-    local chevrons = math.floor(diff / 60) + 1
+    local chevrons = int((GAME_SPEED - getSpeed()) / 60) + 1
     return math.min(chevrons, 5)
 end
 
--- Retourne la chaîne de chevrons pour l'affichage (ex: ">>>")
-local function getSpeedString()
-    local count = getSpeedChevrons()
-    return string.rep(">", count)
-end
-
-local food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
-
--- Fonction de création d'une fenetre
--- si oldWin existe, alors on delete oldWin
--- oldWin existe si ce n'est pas la première fenetre créée
-function manageWindow()
-
+-- ============================================================================
+-- GESTION DE FENÊTRES
+-- ============================================================================
+local function manageWindow()
     local win = gui:window()
     gui:setWindow(win)
-    if oldWin then 
-        gui:del(oldWin) 
-        oldWin = nil 
+    if oldWin then
+        gui:del(oldWin)
+        oldWin = nil
     end
     oldWin = win
     return win
-
 end
 
--- ------------------------------------------------
---        GESTION DE L'ECRAN D'ACCUEIL 
--- ------------------------------------------------
+-- ============================================================================
+-- GESTION DE LA NOURRITURE
+-- ============================================================================
+-- Place la nourriture sur une case libre.
+-- Utilise random + vérification O(1) via bodySet.
+-- Fallback sur liste exhaustive si le serpent occupe >70% de la grille (évite boucle infinie).
+local function placeFood()
+    local attempts = 0
+    repeat
+        food.x = math.random(cols)
+        food.y = math.random(rows)
+        attempts = attempts + 1
+    until not bodySet[food.x * 1000 + food.y] or attempts > 10
 
--- Initialise l'écran d'accueil
-function afficheEcranAccueil()
-    print("dbg-afficheEcranAccueil")
-    
-    cleanupGame()
-    
-    local winEcranAccueil = manageWindow()
-
-    local accueilCanvas = gui:canvas(winEcranAccueil, 0, 0, 320, 480)
-    local imageAccueil = gui:image(accueilCanvas, "PaxoSnake.png", 0, 0, 320, 480, COLOR_BACKGROUND)
-
-    createButton(winEcranAccueil, 10, 440, 95, 30, t("play"), function() afficheEcranJeu() end)
-    createButton(winEcranAccueil, 112, 440, 95, 30, t("settings"), function() afficheEcranSettings() end)
-    createButton(winEcranAccueil, 215, 440, 95, 30, t("quit"), function() gui:setWindow(nil) end)
-
-    print("dbg-finEcranAccueil")
+    if attempts > 10 then
+        local free = {}
+        for x = 1, cols do
+            for y = 1, rows do
+                if not bodySet[x * 1000 + y] then
+                    free[#free + 1] = {x = x, y = y}
+                end
+            end
+        end
+        if #free > 0 then
+            local chosen = free[math.random(#free)]
+            food.x = chosen.x
+            food.y = chosen.y
+        end
+        -- Si free est vide, le serpent remplit toute la grille : victoire implicite
+    end
+    foodDirty = true
 end
 
--- ------------------------------------------------
---        GESTION DE L'ECRAN GAME OVER 
--- ------------------------------------------------
+-- ============================================================================
+-- DESSIN
+-- ============================================================================
 
--- Initialise l'écran Game Over
-function afficheEcranGameOver()
-    print("dbg-afficheEcranGameOver")
+-- Dessine le serpent entier (utilisé seulement à l'initialisation).
+local function drawSnake()
+    for _, part in ipairs(snake) do
+        drawRect_canvas:fillRect(pixCoord[part.x], pixCoord[part.y], CASE_SIZE, CASE_SIZE, COLOR_SNAKE)
+    end
+end
 
+-- Dessine la nourriture (appelé uniquement quand foodDirty = true).
+local function drawFood()
+    drawRect_canvas:fillRect(pixCoord[food.x], pixCoord[food.y], CASE_SIZE, CASE_SIZE, COLOR_FOOD)
+end
+
+-- ============================================================================
+-- LOGIQUE DE JEU
+-- ============================================================================
+
+local function updateSnake()
+    -- Calculer la nouvelle position de tête via headCell (table pré-allouée, pas d'alloc GC)
+    headCell.x = snake[1].x
+    headCell.y = snake[1].y
+
+    if direction == "right" then
+        headCell.x = headCell.x + 1
+    elseif direction == "left" then
+        headCell.x = headCell.x - 1
+    elseif direction == "up" then
+        headCell.y = headCell.y - 1
+    elseif direction == "down" then
+        headCell.y = headCell.y + 1
+    end
+
+    -- Collision bords
+    if headCell.x < 1 or headCell.x > cols or headCell.y < 1 or headCell.y > rows then
+        gameOverPending = true
+        flashState = 0
+        return
+    end
+
+    -- Collision corps en O(1) via bodySet
+    if bodySet[headCell.x * 1000 + headCell.y] then
+        gameOverPending = true
+        flashState = 0
+        return
+    end
+
+    movesSinceFood = movesSinceFood + 1
+    local ateFood = (headCell.x == food.x and headCell.y == food.y)
+
+    if ateFood then
+        -- Nourriture mangée : le serpent grandit, on alloue une nouvelle tête
+        local newHead = {x = headCell.x, y = headCell.y}
+        table.insert(snake, 1, newHead)
+        bodySet[newHead.x * 1000 + newHead.y] = true
+        drawRect_canvas:fillRect(pixCoord[newHead.x], pixCoord[newHead.y], CASE_SIZE, CASE_SIZE, COLOR_SNAKE)
+
+        score = score + math.max(10, 100 - movesSinceFood * 2) + (#snake - 3) * 5
+        movesSinceFood = 0
+        if score > maxScore then maxScore = score end
+        placeFood()
+    else
+        -- Mouvement normal : on recycle la table de queue comme nouvelle tête (zéro alloc)
+        local recycled = table.remove(snake)
+        bodySet[recycled.x * 1000 + recycled.y] = nil
+        drawRect_canvas:fillRect(pixCoord[recycled.x], pixCoord[recycled.y], CASE_SIZE, CASE_SIZE, COLOR_BACKGROUND)
+
+        recycled.x = headCell.x
+        recycled.y = headCell.y
+        table.insert(snake, 1, recycled)
+        bodySet[recycled.x * 1000 + recycled.y] = true
+        drawRect_canvas:fillRect(pixCoord[recycled.x], pixCoord[recycled.y], CASE_SIZE, CASE_SIZE, COLOR_SNAKE)
+    end
+
+    -- Mise à jour de la barre de statut uniquement si score ou vitesse ont changé
+    local currentChevrons = getSpeedChevrons()
+    if score ~= lastDisplayedScore or currentChevrons ~= lastDisplayedSpeed then
+        statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. string.rep(">", currentChevrons))
+        lastDisplayedScore = score
+        lastDisplayedSpeed = currentChevrons
+    end
+end
+
+-- ============================================================================
+-- BOUCLE PRINCIPALE DU JEU
+-- ============================================================================
+-- Rendu: 50ms fixe (20 FPS)
+-- Mouvement: basé sur getSpeed() via time:monotonic()
+-- Réactivité: mouvement immédiat si directionChanged = true
+-- ============================================================================
+local function update()
+    -- Animation de mort : clignotement du serpent avant l'écran game over
+    if gameOverPending then
+        flashState = flashState + 1
+        local color = (flashState % 2 == 1) and COLOR_BACKGROUND or COLOR_SNAKE
+        for _, part in ipairs(snake) do
+            drawRect_canvas:fillRect(pixCoord[part.x], pixCoord[part.y], CASE_SIZE, CASE_SIZE, color)
+        end
+        if flashState >= 6 then
+            gameOverTimeout = time:setTimeout(afficheEcranGameOver, 50)
+            gameOverPending = false
+        end
+        return
+    end
+
+    local now = time:monotonic()
+    local speed = getSpeed()
+
+    if directionChanged or (now - lastMoveTime >= speed) then
+        lastMoveTime = now
+        directionChanged = false
+        updateSnake()
+    end
+
+    -- Redessine la nourriture uniquement si elle a changé de position
+    if foodDirty then
+        drawFood()
+        foodDirty = false
+    end
+end
+
+-- ============================================================================
+-- ÉCRAN GAME OVER
+-- ============================================================================
+
+afficheEcranGameOver = function()
     cleanupGame()
-    
+
     local winEcranGameOver = manageWindow()
 
     local gameoverCanvas = gui:canvas(winEcranGameOver, 0, 0, 320, 480)
-    local imageGameover = gui:image(gameoverCanvas, "GameOver.png", 0, 0, 320, 480, COLOR_BACKGROUND)
+    gui:image(gameoverCanvas, "GameOver.png", 0, 0, 320, 480, COLOR_BACKGROUND)
 
     local scoreFinal = gui:label(winEcranGameOver, 80, 200, 160, 30)
     scoreFinal:setBackgroundColor(COLOR_BACKGROUND)
@@ -322,29 +434,25 @@ function afficheEcranGameOver()
 
     createButton(winEcranGameOver, 40, 440, 100, 30, t("back"), function() afficheEcranAccueil() end)
     createButton(winEcranGameOver, 180, 440, 100, 30, t("quit"), function() gui:setWindow(nil) end)
-
-    print("dbg-finEcranGameOver")
 end
 
--- ------------------------------------------------
---        ÉCRAN INSTRUCTIONS
--- ------------------------------------------------
+-- ============================================================================
+-- ÉCRAN INSTRUCTIONS
+-- ============================================================================
 
-function afficheEcranInstructions()
-    print("dbg-afficheEcranInstructions")
-    
+afficheEcranInstructions = function()
     local win = manageWindow()
-    
+
     local canvas = gui:canvas(win, 0, 0, 320, 480)
     canvas:fillRect(0, 0, 320, 480, COLOR_BACKGROUND)
-    
+
     local title = gui:label(win, 0, 20, 320, 40)
     title:setFontSize(28)
     title:setText(t("titleInstructions"))
     title:setTextColor(COLOR_YELLOW)
     title:setBackgroundColor(COLOR_BACKGROUND)
     title:setHorizontalAlignment(CENTER_ALIGNMENT)
-    
+
     local instructions = gui:label(win, 20, 80, 280, 200)
     instructions:setFontSize(18)
     instructions:setText(t("instructionText"))
@@ -352,38 +460,34 @@ function afficheEcranInstructions()
     instructions:setBackgroundColor(COLOR_BACKGROUND)
     instructions:setHorizontalAlignment(CENTER_ALIGNMENT)
     instructions:setVerticalAlignment(CENTER_ALIGNMENT)
-    
+
     createButton(win, 40, 420, 240, 40, t("back"), function() afficheEcranSettings() end)
-    
-    print("dbg-finEcranInstructions")
 end
 
--- ------------------------------------------------
---        ÉCRAN PARAMÈTRES
--- ------------------------------------------------
+-- ============================================================================
+-- ÉCRAN PARAMÈTRES
+-- ============================================================================
 
-function afficheEcranSettings()
-    print("dbg-afficheEcranSettings")
-    
+afficheEcranSettings = function()
     local win = manageWindow()
-    
+
     local canvas = gui:canvas(win, 0, 0, 320, 480)
     canvas:fillRect(0, 0, 320, 480, COLOR_BACKGROUND)
-    
+
     local title = gui:label(win, 0, 20, 320, 40)
     title:setFontSize(28)
     title:setText(t("titleSettings"))
     title:setTextColor(COLOR_YELLOW)
     title:setBackgroundColor(COLOR_BACKGROUND)
     title:setHorizontalAlignment(CENTER_ALIGNMENT)
-    
-    -- Langue
+
+    -- Sélection de la langue
     local langLabel = gui:label(win, 20, 90, 280, 30)
     langLabel:setFontSize(20)
     langLabel:setText(t("language") .. ":")
     langLabel:setTextColor(COLOR_WHITE)
     langLabel:setBackgroundColor(COLOR_BACKGROUND)
-    
+
     local langFR = gui:label(win, 40, 130, 100, 35)
     langFR:setFontSize(18)
     langFR:setText("Français")
@@ -397,7 +501,7 @@ function afficheEcranSettings()
         savePreferences()
         afficheEcranSettings()
     end)
-    
+
     local langEN = gui:label(win, 180, 130, 100, 35)
     langEN:setFontSize(18)
     langEN:setText("English")
@@ -411,17 +515,17 @@ function afficheEcranSettings()
         savePreferences()
         afficheEcranSettings()
     end)
-    
-    -- Difficulté
+
+    -- Sélection de la difficulté
     local diffLabel = gui:label(win, 20, 190, 280, 30)
     diffLabel:setFontSize(20)
     diffLabel:setText(t("difficulty") .. ":")
     diffLabel:setTextColor(COLOR_WHITE)
     diffLabel:setBackgroundColor(COLOR_BACKGROUND)
-    
+
     local difficulties = {"easy", "medium", "hard"}
     local diffX = {20, 120, 220}
-    
+
     for i, diff in ipairs(difficulties) do
         local btn = gui:label(win, diffX[i], 230, 80, 35)
         btn:setFontSize(16)
@@ -437,34 +541,25 @@ function afficheEcranSettings()
             afficheEcranSettings()
         end)
     end
-    
-    -- Bouton Instructions
+
     createButton(win, 40, 300, 240, 40, t("instructions"), function() afficheEcranInstructions() end)
-    
-    -- Bouton Retour
-    createButton(win, 40, 360, 240, 40, t("back"), function() afficheEcranAccueil() end)
-    
-    print("dbg-finEcranSettings")
+    createButton(win, 40, 360, 240, 40, t("back"),         function() afficheEcranAccueil() end)
 end
 
--- ------------------------------------------------
---        GESTION DE L'ECRAN DE JEU
--- ------------------------------------------------
+-- ============================================================================
+-- ÉCRAN DE JEU
+-- ============================================================================
 
--- Initialise l'écran de jeu
-function afficheEcranJeu()
-    print("dbg-afficheEcranJeu")
-    
-    -- Annule un timeout game over en attente
+afficheEcranJeu = function()
+    -- Annule un timeout game over éventuellement en attente
     if gameOverTimeout then
         time:removeTimeout(gameOverTimeout)
         gameOverTimeout = nil
     end
-    
+
     local winEcranJeu = manageWindow()
     lastMoveTime = time:monotonic()
-    
-    -- Applique les couleurs et vitesse selon la difficulté
+
     applyDifficulty()
 
     statusBar = gui:label(winEcranJeu, 0, 0, SCREEN_WIDTH, STATUS_BAR_HEIGHT)
@@ -476,38 +571,42 @@ function afficheEcranJeu()
     statusBar:setBorderColor(COLOR_BORDER)
     statusBar:setBorderSize(1)
 
-    -- Initialisation du serpent : position de départ (x=3, y=2), direction vers le bas, score à 0
+    -- Initialisation du serpent et du bodySet
     snake = {{x=3, y=2}, {x=2, y=2}, {x=1, y=2}}
-    food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
+    bodySet = {}
+    for _, part in ipairs(snake) do
+        bodySet[part.x * 1000 + part.y] = true
+    end
+
+    -- Position initiale de la nourriture (garantie hors serpent)
+    food.x = math.random(cols)
+    food.y = math.random(rows)
+    while bodySet[food.x * 1000 + food.y] do
+        food.x = math.random(cols)
+        food.y = math.random(rows)
+    end
+    foodDirty = true
+
     direction = "down"
     score = 0
-    statusBar:setText("Score: 0 | Max: 0 | " .. getSpeedString())
+    movesSinceFood = 0
+    local initChevrons = getSpeedChevrons()
+    statusBar:setText("Score: 0 | Max: " .. maxScore .. " | " .. string.rep(">", initChevrons))
+    lastDisplayedScore = 0
+    lastDisplayedSpeed = initChevrons
     gameRunning = true
 
     local canvasW = cols * CELL_SIZE
     local canvasH = rows * CELL_SIZE
     drawRect_canvas = gui:canvas(winEcranJeu, paddingX, STATUS_BAR_HEIGHT + paddingY, canvasW, canvasH)
 
-    -- ============================================================================
-    -- CONTRÔLES TACTILES
-    -- ============================================================================
-    -- La direction est choisie selon la position du touch par rapport au centre
-    -- Si touch à droite du centre → aller à droite
-    -- Si touch à gauche du centre → aller à gauche
-    -- Si touch en haut du centre → aller en haut
-    -- Si touch en bas du centre → aller en bas
+    -- Contrôles tactiles : direction selon position du touch par rapport au centre du canvas
     drawRect_canvas:onTouch(function(a)
-        local touchX = a[1]
-        local touchY = a[2]
-        
-        local centerX = canvasW / 2
-        local centerY = canvasH / 2
-        
-        local diffX = touchX - centerX
-        local diffY = touchY - centerY
-        
+        local diffX = a[1] - canvasW / 2
+        local diffY = a[2] - canvasH / 2
+
         local newDirection = direction
-        
+
         if math.abs(diffX) > math.abs(diffY) then
             if diffX > 0 and direction ~= "left" then
                 newDirection = "right"
@@ -521,17 +620,15 @@ function afficheEcranJeu()
                 newDirection = "down"
             end
         end
-        
+
         if newDirection ~= direction then
             direction = newDirection
             directionChanged = true
         end
     end)
 
-    -- Dessin du fond de la zone de jeu
+    -- Fond et bordures de la zone de jeu
     drawRect_canvas:fillRect(0, 0, canvasW, canvasH, COLOR_BACKGROUND)
-
-    -- Dessin des bordures autour de la zone de jeu (haut, bas, gauche, droite)
     drawRect_canvas:fillRect(0, 0, canvasW, 1, COLOR_BORDER)
     drawRect_canvas:fillRect(0, canvasH - 1, canvasW, 1, COLOR_BORDER)
     drawRect_canvas:fillRect(0, 0, 1, canvasH, COLOR_BORDER)
@@ -539,118 +636,37 @@ function afficheEcranJeu()
 
     drawSnake()
     drawFood()
+    foodDirty = false
 
     rythme = time:setInterval(update, 50)
-
-end
-
--- Dessin du serpent : +1 pixel pour décaler les cases et éviter de recouvrir les bordures
-function drawSnake()
-    for i, part in ipairs(snake) do
-        local px = (part.x - 1) * CELL_SIZE + 1
-        local py = (part.y - 1) * CELL_SIZE + 1
-        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_SNAKE)
-    end
-end
-
--- Dessin de la nourriture : même décalage de +1 pixel
-function drawFood()
-    local px = (food.x - 1) * CELL_SIZE + 1
-    local py = (food.y - 1) * CELL_SIZE + 1
-    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_FOOD)
-end
-
-function updateSnake()
-    -- Pénalité : -1 point par mouvement (incite à être efficace)
-    score = math.max(0, score - 1)
-    statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. getSpeedString())
-    local head = {x=snake[1].x, y=snake[1].y}
-
-    if direction == "right" then
-        head.x = head.x + 1
-    elseif direction == "left" then
-        head.x = head.x - 1
-    elseif direction == "up" then
-        head.y = head.y - 1
-    elseif direction == "down" then
-        head.y = head.y + 1
-    end
-    -- Vérifier les collisions avec les bords
-    
-    if head.x < 1 or head.x > gridSize.w or head.y < 1 or head.y > gridSize.h then
-        -- Diffère l'appel pour permettre au callback update() de terminer, afin d'évite un conflit avec manageWindow() qui supprime la fenêtre de jeu
-        gameOverTimeout = time:setTimeout(afficheEcranGameOver, 50)
-        return
-    end
-
-    -- Vérifier les collisions avec le corps du serpent
-    for i = 2, #snake do
-        if head.x == snake[i].x and head.y == snake[i].y then
-            gameOverTimeout = time:setTimeout(afficheEcranGameOver, 50)
-            return
-        end
-    end
-
-    table.insert(snake, 1, head)
-
-    if snake[1].x == food.x and snake[1].y == food.y then
-        score = score + FOOD_POINTS + (#snake - 3) * 5
-        if score > maxScore then maxScore = score end
-        statusBar:setText("Score: " .. score .. " | Max: " .. maxScore .. " | " .. getSpeedString())
-        repeat
-            food = {x=math.random(gridSize.w), y=math.random(gridSize.h)}
-        until not isFoodOnSnake(food)
-    else
-        local tail = table.remove(snake)
-        local px = (tail.x - 1) * CELL_SIZE + 1
-        local py = (tail.y - 1) * CELL_SIZE + 1
-        drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_BACKGROUND)
-    end
-
-    -- Afficher que la tête
-    local px = (head.x - 1) * CELL_SIZE + 1
-    local py = (head.y - 1) * CELL_SIZE + 1
-    drawRect_canvas:fillRect(math.floor(px), math.floor(py), CASE_SIZE, CASE_SIZE, COLOR_SNAKE)
-end
-
-function isFoodOnSnake(food)
-    for i, part in ipairs(snake) do
-        if food.x == part.x and food.y == part.y then
-            return true
-        end
-    end
-    return false
 end
 
 -- ============================================================================
--- BOUCLE PRINCIPALE DU JEU
+-- ÉCRAN D'ACCUEIL
 -- ============================================================================
--- Rendu: 50ms fixe (20 FPS)
--- Mouvement: basé sur getSpeed() via time:monotonic()
--- Réactivité: mouvement immédiat si directionChanged = true
--- ============================================================================
-function update()
-    local now = time:monotonic()
-    local speed = getSpeed()
-    
-    if directionChanged or (now - lastMoveTime >= speed) then
-        lastMoveTime = now
-        directionChanged = false
-        updateSnake()
-    end
 
-    drawFood()
+afficheEcranAccueil = function()
+    cleanupGame()
+
+    local winEcranAccueil = manageWindow()
+
+    local accueilCanvas = gui:canvas(winEcranAccueil, 0, 0, 320, 480)
+    gui:image(accueilCanvas, "PaxoSnake.png", 0, 0, 320, 480, COLOR_BACKGROUND)
+
+    createButton(winEcranAccueil, 10,  440, 95, 30, t("play"),     function() afficheEcranJeu() end)
+    createButton(winEcranAccueil, 112, 440, 95, 30, t("settings"), function() afficheEcranSettings() end)
+    createButton(winEcranAccueil, 215, 440, 95, 30, t("quit"),     function() gui:setWindow(nil) end)
 end
 
--- Point d'entrée du programme
+-- ============================================================================
+-- POINTS D'ENTRÉE (globaux : exigés par le runtime PaxOS)
+-- ============================================================================
+
 function run()
     loadPreferences()
     afficheEcranAccueil()
-  
 end
 
--- Point de sortie du programme
 function quit()
-    print("Byebye")
     return
 end
