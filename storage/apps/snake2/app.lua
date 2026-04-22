@@ -377,11 +377,14 @@ local function update()
     -- Animation de mort : clignotement du serpent avant l'écran game over
     if gameOverPending then
         flashState = flashState + 1
-        local color = (flashState % 2 == 1) and COLOR_BACKGROUND or COLOR_SNAKE
-        for _, part in ipairs(snake) do
-            drawRect_canvas:fillRect(pixCoord[part.x], pixCoord[part.y], CASE_SIZE, CASE_SIZE, color)
+        if (flashState - 1) % 4 == 0 then
+            local phase = math.floor((flashState - 1) / 4)
+            local color = (phase % 2 == 0) and COLOR_BACKGROUND or COLOR_SNAKE
+            for _, part in ipairs(snake) do
+                drawRect_canvas:fillRect(pixCoord[part.x], pixCoord[part.y], CASE_SIZE, CASE_SIZE, color)
+            end
         end
-        if flashState >= 6 then
+        if flashState >= 24 then
             gameOverTimeout = time:setTimeout(afficheEcranGameOver, 50)
             gameOverPending = false
         end
